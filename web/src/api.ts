@@ -52,6 +52,9 @@ export const api = {
           fixed_instruction: string;
           priority?: number;
           is_active?: boolean;
+          instruction_type?: "fixed" | "fleet_target";
+          target_kw?: number | null;
+          duration_min?: number | null;
         },
       ),
     ),

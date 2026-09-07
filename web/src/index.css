@@ -934,6 +934,171 @@ button.stat:hover {
   opacity: 0.45;
 }
 
+.demo-device.live {
+  border-color: rgba(226, 163, 54, 0.55);
+  background: linear-gradient(180deg, rgba(226, 163, 54, 0.08), transparent 48%);
+}
+
+.demo-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.soc {
+  height: 7px;
+  border-radius: 99px;
+  background: #0b0d11;
+  overflow: hidden;
+}
+
+.soc-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6ec4c0, #9bbb6a);
+  transition: width 0.6s ease;
+}
+
+.soc.empty-soc {
+  opacity: 0.35;
+}
+
+.live-strip {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1.2fr;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  align-items: center;
+}
+
+.live-clock strong {
+  display: block;
+  font-size: 28px;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+}
+
+.live-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.live-metric span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.live-metric b {
+  font-size: 20px;
+}
+
+.live-wx {
+  display: flex;
+  gap: 16px;
+  justify-content: flex-end;
+}
+
+.live-wx div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.live-wx b {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.demand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.demand-svg {
+  width: 240px;
+  height: 36px;
+}
+
+.cmd-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: #16120a;
+  border: 1px solid rgba(226, 163, 54, 0.35);
+  border-radius: 12px;
+}
+
+.cmd-prompt {
+  color: var(--amber);
+  font-size: 13px;
+}
+
+.cmd-bar input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.cmd-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.split .muted {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.alloc-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.alloc-bar {
+  display: grid;
+  grid-template-columns: 88px 1fr 48px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .live-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+  .live-wx {
+    justify-content: flex-start;
+    grid-column: 1 / -1;
+  }
+}
+
 @keyframes demo-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(226, 163, 54, 0.45);
