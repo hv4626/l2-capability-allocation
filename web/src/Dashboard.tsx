@@ -113,6 +113,18 @@ export function Dashboard({
           <b>{pending}</b>
           <span>Pending acks</span>
         </button>
+        <button className="stat" onClick={() => onNavigate("alloc")}>
+          <b>
+            {data.solver_runs[0]
+              ? data.solver_runs[0].allocated_kw.toFixed(1)
+              : "0"}
+          </b>
+          <span>Last allocated kW</span>
+        </button>
+        <button className="stat" onClick={() => onNavigate("alloc")}>
+          <b>{data.reservations.filter((r) => r.status !== "released").length}</b>
+          <span>Live reservations</span>
+        </button>
       </div>
 
       <CompactFlow data={data} result={result} />
@@ -122,11 +134,15 @@ export function Dashboard({
         <span className="pipe-arrow">→</span>
         <Pipe n={data.lists.length} label="static lists" />
         <span className="pipe-arrow">→</span>
-        <Pipe n={listed.size} label="reachable members" />
+        <Pipe n={listed.size} label="list members" />
         <span className="pipe-arrow">→</span>
-        <Pipe n={data.messages.length} label="CHANNEL_MESSAGE" tone="cyan" />
+        <Pipe n={data.allocations.length} label="setpoints" tone="cyan" />
         <span className="pipe-arrow">→</span>
-        <Pipe n={data.messages.filter((m) => m.status === "acked").length} label="acked" tone="amber" />
+        <Pipe
+          n={data.solver_runs.reduce((n, r) => n + r.shortfall_kw, 0) > 0 ? 1 : 0}
+          label="shortfall"
+          tone="amber"
+        />
       </div>
 
       <div className="dash-grid">

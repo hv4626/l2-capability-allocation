@@ -89,11 +89,11 @@ export function CompactFlow({
           <HArrow id={mid} x1={336} y={75} x2={364} label="same source" />
           <Node x={364} y={36} w={150} h={78} kicker="3" title="Compare" sub="value ? threshold" state={st.compare} />
           <HArrow id={mid} x1={514} y={75} x2={542} label="crossed" />
-          <Node x={542} y={36} w={150} h={78} kicker="4" title="Fan-out" sub="active · not dispatched" state={st.list} />
+          <Node x={542} y={36} w={150} h={78} kicker="4" title="Eligible slack" sub="SoC · floor · site cap" state={st.list} />
           <HArrow id={mid} x1={692} y={48} x2={720} />
           <HArrow id={mid} x1={692} y={102} x2={720} />
-          <Node x={720} y={8} w={168} h={58} kicker="5a" title="CHANNEL_MESSAGE" sub={`${sendN} · pending→ack`} state={st.send} />
-          <Node x={720} y={80} w={168} h={58} kicker="5b" title="Dispatch log" sub="written before send" state={st.log} />
+          <Node x={720} y={8} w={168} h={58} kicker="5a" title="QP setpoints" sub={`${sendN} · p_i kW`} state={st.send} />
+          <Node x={720} y={80} w={168} h={58} kicker="5b" title="Reservation" sub="held before send" state={st.log} />
           <Node x={908} y={36} w={196} h={78} kicker="miss" title="No-op" sub="write nothing" state={st.skip} />
           <path
             d="M514 75 C514 75 514 18 1006 18 L1006 36"

@@ -617,6 +617,15 @@ class Store:
                 raise KeyError(allocation_id)
             return _alloc(row)
 
+    def set_allocation_delivered(self, allocation_id: str, delivered_kwh: float) -> DeviceAllocation:
+        with self.session() as s:
+            row = s.get(DeviceAllocationRow, allocation_id)
+            if row is None:
+                raise KeyError(allocation_id)
+            row.delivered_kwh = delivered_kwh
+            s.commit()
+            return _alloc(row)
+
     def set_allocation_status(self, allocation_id: str, status: str) -> DeviceAllocation:
         with self.session() as s:
             row = s.get(DeviceAllocationRow, allocation_id)

@@ -19,6 +19,8 @@ const MAX_DISPATCH_RETRIES = 2;
 const MAX_CONFIG_RETRIES = 3;
 const ACK_TIMEOUT = 2;
 const CONFIG_TIMEOUT = 3;
+const MAX_REALLOCATIONS = 3;
+const TELEMETRY_STALE_MS = 15 * 60_000;
 const COMPARATORS = [">", ">=", "<", "<=", "==", "!="] as const;
 
 type State = Snapshot;
@@ -540,6 +542,29 @@ export function tickTimeouts(): Snapshot {
     msg.status = "timed_out";
     retryOrFail(msg);
   }
+  const expiredEvents = new Set<string>();
+  for (const r of state.reservations) {
+    if (r.status === "released") continue;
+    if (Date.parse(r.held_until) > now) continue;
+    const run = state.solver_runs.find((x) => x.run_id === r.run_id);
+    if (run) expiredEvents.add(run.event_id);
+    r.status = "released";
+  }
+  for (const eventId of expiredEvents) {
+    const live = state.allocations.filter((a) => {
+      const run = state.solver_runs.find((x) => x.run_id === a.run_id);
+      return run?.event_id === eventId && ["sent", "confirmed", "pending"].includes(a.status);
+    });
+    if (live.length) releaseEvent(eventId, "event_complete");
+  }
+  for (const a of state.allocations) {
+    if (a.status !== "confirmed" || a.delivered_kwh != null) continue;
+    const rsv = state.reservations.find((r) => r.allocation_id === a.allocation_id);
+    if (!rsv || Date.parse(rsv.held_until) > now) continue;
+    const d = state.devices.find((x) => x.device_id === a.device_id);
+    const dtH = Math.max(0, (Date.parse(rsv.held_until) - Date.parse(rsv.held_from)) / 3_600_000);
+    a.delivered_kwh = Math.abs(d?.last_p_ac_kw ?? 0) * dtH;
+  }
   save(state);
   return snap();
 }
@@ -547,8 +572,23 @@ export function tickTimeouts(): Snapshot {
 function retryOrFail(msg: ChannelMessage): void {
   const device = state.devices.find((d) => d.device_id === msg.device_id);
   if (!device) return;
-  if (msg.message_type === "dispatch_instruction" && msg.attempt_number <= MAX_DISPATCH_RETRIES) {
-    sendDispatch(device, msg.event_id ?? "", msg.payload, msg.attempt_number + 1, msg.message_id);
+  if (
+    (msg.message_type === "dispatch_instruction" || msg.message_type === "setpoint_revision") &&
+    msg.attempt_number <= MAX_DISPATCH_RETRIES
+  ) {
+    if (msg.allocation_id) {
+      sendTyped(
+        device,
+        msg.event_id ?? "",
+        msg.message_type,
+        msg.payload,
+        msg.allocation_id,
+        msg.attempt_number + 1,
+        msg.message_id,
+      );
+    } else {
+      sendDispatch(device, msg.event_id ?? "", msg.payload, msg.attempt_number + 1, msg.message_id);
+    }
     return;
   }
   if (msg.message_type === "config_sync" && msg.attempt_number <= MAX_CONFIG_RETRIES) {
@@ -563,6 +603,7 @@ function retryOrFail(msg: ChannelMessage): void {
       for (const r of state.reservations) {
         if (r.allocation_id === msg.allocation_id) r.status = "released";
       }
+      reallocate(a ?? null);
     }
   } else if (msg.message_type === "release") {
     device.current_dispatch_state = "idle";
@@ -679,6 +720,45 @@ function liveReservedKw(deviceId: string): number {
     .reduce((n, r) => n + r.reserved_kw, 0);
 }
 
+function deadReckon(d: Device, cap: DeviceCapability, t0: number): number {
+  let soc = d.last_soc_pct ?? 0;
+  if (!d.last_telemetry_at || d.last_p_ac_kw == null) return soc;
+  const dtH = Math.max(0, (t0 - Date.parse(d.last_telemetry_at)) / 3_600_000);
+  const p = d.last_p_ac_kw;
+  const e = cap.energy_capacity_kwh;
+  if (e <= 0 || dtH === 0) return soc;
+  if (p >= 0) soc -= ((p * dtH) / (cap.eta_discharge * e)) * 100;
+  else soc += (((-p) * dtH * cap.eta_charge) / e) * 100;
+  return Math.max(cap.soc_min_pct, Math.min(cap.soc_max_pct, soc));
+}
+
+function reallocate(failed: DeviceAllocation | null): void {
+  if (!failed) return;
+  const run = state.solver_runs.find((r) => r.run_id === failed.run_id);
+  if (!run || run.run_number >= MAX_REALLOCATIONS) return;
+  const event = state.dispatch_log.find((e) => e.event_id === run.event_id);
+  const rule = state.rules.find((r) => r.rule_id === event?.rule_id);
+  if (!event || !rule || rule.instruction_type !== "fleet_target") return;
+  const committed = state.allocations
+    .filter((a) => {
+      const rr = state.solver_runs.find((x) => x.run_id === a.run_id);
+      return rr?.event_id === event.event_id && (a.status === "sent" || a.status === "confirmed");
+    })
+    .reduce((n, a) => n + Math.abs(a.p_setpoint_kw), 0);
+  const residual = Math.abs(rule.target_kw ?? 0) - committed;
+  if (residual < 0.01) return;
+  const sign = (rule.target_kw ?? 0) >= 0 ? 1 : -1;
+  allocateEvent(event, { ...rule, target_kw: residual * sign }, new Date().toISOString());
+  if (state.solver_runs[0]) state.solver_runs[0].run_number = run.run_number + 1;
+}
+
+export function setOptOut(deviceId: string, until: string | null): Snapshot {
+  const d = state.devices.find((x) => x.device_id === deviceId);
+  if (d) d.opt_out_until = until;
+  save(state);
+  return snap();
+}
+
 function liveReservedEnergy(deviceId: string): number {
   return state.reservations
     .filter((r) => r.device_id === deviceId && (r.status === "held" || r.status === "committed"))
@@ -699,16 +779,28 @@ function allocateEvent(event: DispatchEvent, rule: ThresholdRule, now: string): 
     if (d.device_status !== "active" || d.config_status !== "synced") continue;
     if (hasInFlight(d.device_id)) continue;
     if (d.opt_out_until && Date.parse(d.opt_out_until) > Date.parse(now)) continue;
-    if (!d.last_telemetry_at || Date.now() - Date.parse(d.last_telemetry_at) > 15 * 60_000) continue;
+    const failedThis = state.allocations.some((a) => {
+      const rr = state.solver_runs.find((x) => x.run_id === a.run_id);
+      return rr?.event_id === event.event_id && a.device_id === id && a.status === "failed";
+    });
+    if (failedThis) continue;
+    if (!d.last_telemetry_at || Date.now() - Date.parse(d.last_telemetry_at) > TELEMETRY_STALE_MS) continue;
     const site = state.sites.find((s) => s.site_id === d.site_id);
     const floor = Math.max(cap.soc_min_pct, d.reserve_bound_pct, site?.contract_floor_soc_pct ?? 0);
-    const soc = d.last_soc_pct ?? 0;
-    let energy = cap.energy_capacity_kwh * Math.max(0, soc - floor) / 100;
+    const soc = deadReckon(d, cap, Date.parse(now));
+    const discharge = (rule.target_kw ?? 0) >= 0;
+    let energy = discharge
+      ? cap.energy_capacity_kwh * Math.max(0, soc - floor) / 100
+      : cap.energy_capacity_kwh * Math.max(0, cap.soc_max_pct - soc) / 100;
     energy -= liveReservedEnergy(d.device_id);
-    const sKw = cap.eta_discharge * Math.max(0, energy) / durationH;
-    let pbar = Math.max(0, Math.min(cap.p_discharge_max_kw - liveReservedKw(d.device_id), sKw));
-    const g = site?.export_limit_kw == null ? Infinity : Math.max(0, site.export_limit_kw);
-    let bind = sKw < cap.p_discharge_max_kw ? "energy" : "power";
+    const sKw = discharge
+      ? cap.eta_discharge * Math.max(0, energy) / durationH
+      : Math.max(0, energy) / (cap.eta_charge * durationH);
+    const pMax = discharge ? cap.p_discharge_max_kw : cap.p_charge_max_kw;
+    let pbar = Math.max(0, Math.min(pMax - Math.abs(liveReservedKw(d.device_id)), sKw));
+    const limit = discharge ? site?.export_limit_kw : site?.import_limit_kw;
+    const g = limit == null ? Infinity : Math.max(0, limit);
+    let bind = sKw < pMax ? "energy" : "power";
     if (g < Infinity && pbar > g) {
       pbar = g;
       bind = "site";
@@ -739,6 +831,7 @@ function allocateEvent(event: DispatchEvent, rule: ThresholdRule, now: string): 
     const step = e.cap.setpoint_step_kw || 0.1;
     const p = Math.floor(raw / step) * step;
     if (p < 0.01) continue;
+    const signed = (rule.target_kw ?? 0) >= 0 ? p : -p;
     allocated += p;
     const alloc: DeviceAllocation = {
       allocation_id: nid("alloc"),
@@ -748,11 +841,12 @@ function allocateEvent(event: DispatchEvent, rule: ThresholdRule, now: string): 
       soc_at_solve_pct: e.soc,
       floor_soc_pct: e.floor,
       headroom_kw: e.pbar,
-      p_setpoint_kw: p,
-      p_setpoint_raw_kw: raw,
+      p_setpoint_kw: signed,
+      p_setpoint_raw_kw: (rule.target_kw ?? 0) >= 0 ? raw : -raw,
       expected_energy_kwh: (p * durationH) / e.cap.eta_discharge,
       binding_constraint: e.bind,
       status: "sent",
+      delivered_kwh: null,
     };
     state.allocations.unshift(alloc);
     const rsv: HeadroomReservation = {
@@ -761,14 +855,14 @@ function allocateEvent(event: DispatchEvent, rule: ThresholdRule, now: string): 
       site_id: e.d.site_id,
       run_id: run.run_id,
       allocation_id: alloc.allocation_id,
-      reserved_kw: p,
+      reserved_kw: signed,
       reserved_energy_kwh: alloc.expected_energy_kwh,
       held_from: now,
       held_until: expires,
       status: "held",
     };
     state.reservations.unshift(rsv);
-    const payload = JSON.stringify({ p_setpoint_kw: p, duration_min: durationMin, expires_at: expires });
+    const payload = JSON.stringify({ p_setpoint_kw: signed, duration_min: durationMin, expires_at: expires });
     sendTyped(e.d, event.event_id, "dispatch_instruction", payload, alloc.allocation_id);
     sent.push(e.d.device_id);
   }
@@ -785,6 +879,8 @@ function sendTyped(
   messageType: ChannelMessage["message_type"],
   payload: string,
   allocationId: string | null,
+  attempt = 1,
+  retryOf: string | null = null,
 ): void {
   const now = new Date().toISOString();
   const msg: ChannelMessage = {
@@ -797,8 +893,8 @@ function sendTyped(
     sent_at: now,
     ack_at: null,
     timeout_seconds: messageType === "release" ? 2 : ACK_TIMEOUT,
-    attempt_number: 1,
-    retry_of_message_id: null,
+    attempt_number: attempt,
+    retry_of_message_id: retryOf,
     allocation_id: allocationId,
   };
   state.messages.unshift(msg);

@@ -475,6 +475,79 @@ def release_event(
     return n
 
 
+def tick_layer(store: Store, channel: ChannelSender, now: datetime | None = None) -> None:
+    """L1 timeouts plus L2 expiry sweep, auto-release, and settlement."""
+    from l0_foundation.l1_engine import tick_timeouts
+
+    at = _now(now)
+    tick_timeouts(store, channel, now=at)
+    auto_release_expired(store, channel, at)
+    store.expire_reservations(at)
+    settle_allocations(store, at)
+
+
+def auto_release_expired(store: Store, channel: ChannelSender, now: datetime) -> None:
+    seen: set[str] = set()
+    for rsv in store.list_reservations():
+        if rsv.status == "released":
+            continue
+        until = rsv.held_until
+        if getattr(until, "tzinfo", None) is None and now.tzinfo is not None:
+            until = until.replace(tzinfo=now.tzinfo)
+        if until > now:
+            continue
+        try:
+            run = store.get_solver_run(rsv.run_id)
+        except KeyError:
+            continue
+        if run.event_id in seen:
+            continue
+        seen.add(run.event_id)
+        live = [
+            a
+            for a in store.list_allocations(run.event_id)
+            if a.status in ("sent", "confirmed", "pending")
+        ]
+        if live:
+            release_event(store, channel, run.event_id, reason="event_complete", now=now)
+
+
+def settle_allocations(store: Store, now: datetime) -> None:
+    samples = store.list_telemetry()
+    for alloc in store.list_allocations():
+        if alloc.status != "confirmed" or alloc.delivered_kwh is not None:
+            continue
+        rsvs = [r for r in store.list_reservations() if r.allocation_id == alloc.allocation_id]
+        if not rsvs:
+            continue
+        start, end = rsvs[0].held_from, rsvs[0].held_until
+        if getattr(end, "tzinfo", None) is None and now.tzinfo is not None:
+            end = end.replace(tzinfo=now.tzinfo)
+        if end > now:
+            continue
+        pts = [
+            (s.observed_at, s.p_ac_kw)
+            for s in samples
+            if s.device_id == alloc.device_id
+        ]
+        pts.sort(key=lambda x: x[0])
+        if len(pts) < 2:
+            dt_h = max(0.0, (end - start).total_seconds() / 3600.0)
+            device = store.get_device(alloc.device_id)
+            p = device.last_p_ac_kw or 0.0
+            store.set_allocation_delivered(alloc.allocation_id, abs(p) * dt_h)
+            continue
+        energy = 0.0
+        for i in range(1, len(pts)):
+            t0, p0 = pts[i - 1]
+            t1, p1 = pts[i]
+            if t1 <= start or t0 >= end:
+                continue
+            dt_h = (t1 - t0).total_seconds() / 3600.0
+            energy += abs((p0 + p1) / 2.0) * dt_h
+        store.set_allocation_delivered(alloc.allocation_id, energy)
+
+
 def seed_telemetry_now(store: Store, now: datetime | None = None) -> int:
     """Fresh samples so the demo fleet is eligible."""
     at = _now(now)

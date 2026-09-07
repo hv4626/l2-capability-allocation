@@ -72,6 +72,58 @@ def test_stale_telemetry_excluded(tmp_path):
     assert all(a.device_id != "dev_jay_batt" for a in allocs)
 
 
+def test_opt_out_excludes_device(tmp_path):
+    store = Store(f"sqlite:///{tmp_path / 't.sqlite'}")
+    seed(store)
+    bus = FireAndForgetBus()
+    t0 = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+    sync_all_unsynced(store, bus)
+    seed_telemetry_now(store, now=t0)
+    d = store.get_device("dev_kora_batt")
+    store.put_device(
+        d.__class__(
+            **{**d.__dict__, "opt_out_until": t0.replace(hour=23)}
+        )
+    )
+    evaluate_signals_l1([IncomingSignal("forecast_peak", 0.91, "sig_opt")], store, bus, now=t0)
+    assert all(a.device_id != "dev_kora_batt" for a in store.list_allocations())
+
+
+def test_second_event_sees_reservations(tmp_path):
+    store = Store(f"sqlite:///{tmp_path / 't.sqlite'}")
+    seed(store)
+    bus = FireAndForgetBus()
+    t0 = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+    sync_all_unsynced(store, bus)
+    seed_telemetry_now(store, now=t0)
+    evaluate_signals_l1([IncomingSignal("forecast_peak", 0.91, "sig_a")], store, bus, now=t0)
+    h1 = store.list_solver_runs()[0].total_headroom_kw
+    evaluate_signals_l1([IncomingSignal("forecast_peak", 0.92, "sig_b")], store, bus, now=t0)
+    runs = sorted(store.list_solver_runs(), key=lambda r: r.solved_at)
+    assert len(runs) >= 2
+    # overlapping hold reduces remaining headroom for the second solve
+    assert runs[-1].total_headroom_kw < h1 - 1.0
+
+
+def test_charge_target_negative(tmp_path):
+    store = Store(f"sqlite:///{tmp_path / 't.sqlite'}")
+    seed(store)
+    bus = FireAndForgetBus()
+    t0 = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+    sync_all_unsynced(store, bus)
+    seed_telemetry_now(store, now=t0)
+    rule = store.get_rule("rul_forecast_peak")
+    store.put_rule(
+        rule.__class__(
+            **{**rule.__dict__, "target_kw": -8.0}
+        )
+    )
+    evaluate_signals_l1([IncomingSignal("forecast_peak", 0.91, "sig_chg")], store, bus, now=t0)
+    allocs = store.list_allocations()
+    assert allocs
+    assert all(a.p_setpoint_kw <= 0 for a in allocs)
+
+
 def test_release_frees_reservations(tmp_path):
     store = Store(f"sqlite:///{tmp_path / 't.sqlite'}")
     seed(store)

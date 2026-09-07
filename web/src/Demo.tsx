@@ -14,6 +14,7 @@ type Step = {
   | { kind: "telemetry" }
   | { kind: "signal"; source: string; value: number; signal_id: string }
   | { kind: "pause"; device_id: string }
+  | { kind: "opt_out"; device_id: string }
   | { kind: "deactivate"; rule_id: string }
   | { kind: "arm_overlap" }
 );
@@ -81,11 +82,11 @@ const STUDY: Step[] = [
     signal_id: "sig_study_1500",
   },
   {
-    kind: "pause",
+    kind: "opt_out",
     t: "15:20",
-    title: "Pune battery is paused",
-    body: "Operator sets device_status=paused. That is not current_dispatch_state. The device still exists; L1 will not Channel.send to a paused device.",
-    expect: "dev_pune_batt paused.",
+    title: "Pune battery opts out",
+    body: "Customer opt-out (opt_out_until) is not pause and not un-enrolment. L2 drops Pune from the eligible set, so its slack is not counted.",
+    expect: "dev_pune_batt opted out. Still active.",
     device_id: "dev_pune_batt",
   },
   {
@@ -93,7 +94,7 @@ const STUDY: Step[] = [
     t: "16:00",
     title: "Second peak print",
     body: "A new signal_id, still above threshold. Four batteries are sent; Pune is on the list but not active, so it is skipped.",
-    expect: "Fire again. 4 sends. Pune excluded.",
+    expect: "Fire again. Pune opted out so its slack is not in the solve.",
     source: "forecast_peak",
     value: 0.94,
     signal_id: "sig_study_1600",
@@ -198,6 +199,10 @@ export function Demo({
           `${sent.length} send${sent.length === 1 ? "" : "s"}`,
         ];
         setLog((prev) => [`${s.t}  ${s.source}=${s.value}  ${bits.join(" · ")}`, ...prev].slice(0, 14));
+      } else if (s.kind === "opt_out") {
+        await api.setOptOut(s.device_id, new Date(Date.now() + 4 * 3600_000).toISOString());
+        setHit([]);
+        setLog((prev) => [`${s.t}  opt-out ${s.device_id}`, ...prev].slice(0, 14));
       } else if (s.kind === "pause") {
         const d = (await api.snapshot()).devices.find((x) => x.device_id === s.device_id);
         if (d) await api.createDevice({ ...d, device_status: "paused" });

@@ -99,6 +99,7 @@ export type DeviceAllocation = {
   expected_energy_kwh: number;
   binding_constraint: string;
   status: string;
+  delivered_kwh: number | null;
 };
 
 export type HeadroomReservation = {

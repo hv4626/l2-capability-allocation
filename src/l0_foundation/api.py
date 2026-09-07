@@ -13,8 +13,8 @@ from pydantic import BaseModel, Field
 
 from l0_foundation.channels import FireAndForgetBus
 from l0_foundation.comparators import COMPARATORS
-from l0_foundation.l1_engine import evaluate_signals_l1, sync_all_unsynced, sync_reserve_bound, tick_timeouts
-from l0_foundation.l2_engine import ingest_telemetry, release_event, seed_telemetry_now
+from l0_foundation.l1_engine import evaluate_signals_l1, sync_all_unsynced, sync_reserve_bound
+from l0_foundation.l2_engine import ingest_telemetry, release_event, seed_telemetry_now, tick_layer
 from l0_foundation.entities import (
     DEVICE_ACTIVE,
     DEVICE_STATUSES,
@@ -499,7 +499,7 @@ def config_sync(device_id: str | None = None) -> dict:
 
 @app.post("/api/tick")
 def tick() -> dict:
-    tick_timeouts(get_store(), get_bus())
+    tick_layer(get_store(), get_bus())
     return snapshot()
 
 

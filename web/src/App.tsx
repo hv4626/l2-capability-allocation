@@ -232,6 +232,9 @@ function Reach({
               <th>device_status</th>
               <th>dispatch</th>
               <th>config</th>
+              <th>SoC</th>
+              <th>export cap</th>
+              <th>opt-out</th>
               <th>Reserve %</th>
             </tr>
           </thead>
@@ -262,6 +265,11 @@ function Reach({
                   </td>
                   <td>
                     <span className={configClass(d.config_status)}>{d.config_status}</span>
+                  </td>
+                  <td className="mono">{d.last_soc_pct == null ? "—" : `${d.last_soc_pct.toFixed(0)}%`}</td>
+                  <td className="mono">{site?.export_limit_kw ?? "∞"}</td>
+                  <td>
+                    {d.opt_out_until ? <span className="pill red">opt-out</span> : <span className="pill">in</span>}
                   </td>
                   <td>
                     <span className="mono" title="Failsafe payload L1 pushes and confirms.">
@@ -515,6 +523,7 @@ function Inventory({
               <th>dispatch</th>
               <th>config</th>
               <th>reserve %</th>
+              <th>SoC</th>
               <th></th>
             </tr>
           </thead>
@@ -574,6 +583,7 @@ function Inventory({
                     }}
                   />
                 </td>
+                <td className="mono">{d.last_soc_pct == null ? "—" : `${d.last_soc_pct.toFixed(0)}%`}</td>
                 <td>
                   <button
                     className="btn"
@@ -581,6 +591,20 @@ function Inventory({
                     onClick={() => run(() => api.configSync(d.device_id))}
                   >
                     Sync
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    onClick={() =>
+                      run(() =>
+                        api.setOptOut(
+                          d.device_id,
+                          d.opt_out_until ? null : new Date(Date.now() + 2 * 3600_000).toISOString(),
+                        ),
+                      )
+                    }
+                  >
+                    {d.opt_out_until ? "Clear opt-out" : "Opt out 2h"}
                   </button>
                   <button
                     className="btn danger"
@@ -612,11 +636,10 @@ function Lists({
       <p className="kicker">Fan-out</p>
       <h1>Broadcast lists</h1>
       <p className="lede">
-        A rule still targets a list. Every reachable member gets the same
-        instruction as its own CHANNEL_MESSAGE. L1 does not pick a subset for
-        capability — it only skips <code>paused</code> /{" "}
-        <code>decommissioned</code> and devices already{" "}
-        <code>dispatched</code>.
+        A rule still targets a list. For <code>fleet_target</code>, L2 then
+        splits a kW target across eligible members by slack — not the same
+        instruction to everyone. Inactive, unsynced, stale, opted-out, or
+        in-flight devices are excluded.
       </p>
       <div className="panel">
         <form
@@ -707,10 +730,10 @@ function Rules({
       <p className="kicker">Threshold</p>
       <h1>Rules</h1>
       <p className="lede">
-        If the named signal crosses the comparator, each <code>active</code>{" "}
-        list member that is not already <code>dispatched</code> gets a pending{" "}
-        <code>CHANNEL_MESSAGE</code> with <code>fixed_instruction</code>.
-        Inactive rules are skipped. Lower <code>priority</code> runs first.
+        <code>fixed</code> rules still broadcast one string (L0/L1).{" "}
+        <code>fleet_target</code> rules send a kW target and duration; L2
+        solves per-device setpoints. Inactive rules are skipped. Lower{" "}
+        <code>priority</code> runs first.
       </p>
       <div className="panel">
         <form
@@ -728,6 +751,9 @@ function Rules({
                 fixed_instruction: String(f.get("fixed_instruction")),
                 priority: Number(f.get("priority") || 100),
                 is_active: f.get("is_active") === "on",
+                instruction_type: String(f.get("instruction_type") || "fixed"),
+                target_kw: f.get("target_kw") ? Number(f.get("target_kw")) : null,
+                duration_min: f.get("duration_min") ? Number(f.get("duration_min")) : null,
               }),
             );
             e.currentTarget.reset();
@@ -766,8 +792,23 @@ function Rules({
             </select>
           </label>
           <label>
+            type
+            <select name="instruction_type" defaultValue="fleet_target">
+              <option value="fleet_target">fleet_target</option>
+              <option value="fixed">fixed</option>
+            </select>
+          </label>
+          <label>
+            target_kw
+            <input name="target_kw" type="number" step="0.1" placeholder="15" />
+          </label>
+          <label>
+            duration_min
+            <input name="duration_min" type="number" placeholder="30" />
+          </label>
+          <label>
             fixed_instruction
-            <input name="fixed_instruction" required placeholder="DISCHARGE 0.5 PU" />
+            <input name="fixed_instruction" placeholder="only for fixed rules" />
           </label>
           <label>
             priority
@@ -791,7 +832,8 @@ function Rules({
               <th>pri</th>
               <th>when</th>
               <th>list</th>
-              <th>instruction</th>
+              <th>type</th>
+              <th>instruction / target</th>
               <th>active</th>
               <th></th>
             </tr>
@@ -806,7 +848,16 @@ function Rules({
                 </td>
                 <td className="mono">{r.list_id}</td>
                 <td>
-                  <span className="pill amber">{r.fixed_instruction}</span>
+                  <span className="pill cyan">{r.instruction_type}</span>
+                </td>
+                <td>
+                  {r.instruction_type === "fleet_target" ? (
+                    <span className="pill amber">
+                      {r.target_kw} kW · {r.duration_min} min
+                    </span>
+                  ) : (
+                    <span className="pill amber">{r.fixed_instruction}</span>
+                  )}
                 </td>
                 <td>
                   <input

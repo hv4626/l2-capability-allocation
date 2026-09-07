@@ -60,4 +60,5 @@ export const api = {
   configSync: (deviceId?: string) => wrap(() => l0.syncConfig(deviceId)),
   telemetrySeed: () => wrap(() => l0.seedTelemetry()),
   release: (eventId: string) => wrap(() => l0.releaseEvent(eventId)),
+  setOptOut: (deviceId: string, until: string | null) => wrap(() => l0.setOptOut(deviceId, until)),
 };
